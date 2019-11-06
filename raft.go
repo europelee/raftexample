@@ -281,6 +281,7 @@ func (rc *raftNode) startRaft() {
 		Storage:         rc.raftStorage,
 		MaxSizePerMsg:   1024 * 1024,
 		MaxInflightMsgs: 256,
+		CheckQuorum:     true,
 	}
 
 	if oldwal {
@@ -420,11 +421,14 @@ func (rc *raftNode) serveChannels() {
 	}()
 
 	// event loop on raft state machine updates
+	leaderChkticker := time.NewTicker(5 * time.Second)
+	defer leaderChkticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			rc.node.Tick()
-
+		case <-leaderChkticker.C:
+			fmt.Println("local node status:" + rc.node.Status().String())
 		// store raft entries to wal, then publish over commit channel
 		case rd := <-rc.node.Ready():
 			if rd.SoftState != nil {
