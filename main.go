@@ -23,7 +23,7 @@ import (
 
 func main() {
 	cluster := flag.String("cluster", "http://127.0.0.1:9021", "comma separated cluster peers")
-	id := flag.Int("id", 1, "node ID")
+	name := flag.String("name", "node1", "node name")
 	kvport := flag.Int("port", 9121, "key-value server port")
 	join := flag.Bool("join", false, "join an existing cluster")
 	flag.Parse()
@@ -36,7 +36,7 @@ func main() {
 	// raft provides a commit stream for the proposals from the http api
 	var kvs *kvstore
 	getSnapshot := func() ([]byte, error) { return kvs.getSnapshot() }
-	commitC, errorC, snapshotterReady := newRaftNode(*id, strings.Split(*cluster, ","), *join, getSnapshot, proposeC, confChangeC)
+	commitC, errorC, snapshotterReady := newRaftNode(*name, strings.Split(*cluster, ","), *join, getSnapshot, proposeC, confChangeC)
 
 	kvs = newKVStore(<-snapshotterReady, proposeC, commitC, errorC)
 

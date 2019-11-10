@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -43,11 +44,12 @@ type raftNode struct {
 	commitC     chan<- *string           // entries committed to log (k,v)
 	errorC      chan<- error             // errors from raft session
 
-	id          int      // client ID for raft session
-	peers       []string // raft peer URLs
-	join        bool     // node is joining an existing cluster
-	waldir      string   // path to WAL directory
-	snapdir     string   // path to snapshot directory
+	name        string // client name for raft session
+	id          uint64
+	peers       map[uint64]string // raft peers name=url
+	join        bool              // node is joining an existing cluster
+	waldir      string            // path to WAL directory
+	snapdir     string            // path to snapshot directory
 	getSnapshot func() ([]byte, error)
 	lastIndex   uint64 // index of log at start
 	hasLeader   int32
@@ -73,25 +75,27 @@ type raftNode struct {
 }
 
 var defaultSnapCount uint64 = 10000
+var clusterName string = "1000"
 
 // newRaftNode initiates a raft instance and returns a committed log entry
 // channel and error channel. Proposals for log updates are sent over the
 // provided the proposal channel. All log entries are replayed over the
 // commit channel, followed by a nil message (to indicate the channel is
 // current), then new log entries. To shutdown, close proposeC and read errorC.
-func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, error), proposeC <-chan string,
+func newRaftNode(name string, peers []string, join bool, getSnapshot func() ([]byte, error), proposeC <-chan string,
 	confChangeC <-chan raftpb.ConfChange) (<-chan *string, <-chan error, <-chan *snap.Snapshotter) {
 
 	commitC := make(chan *string)
 	errorC := make(chan error)
-
+	id := newID(name, clusterName)
 	rc := &raftNode{
 		proposeC:    proposeC,
 		confChangeC: confChangeC,
 		commitC:     commitC,
 		errorC:      errorC,
+		name:        name,
 		id:          id,
-		peers:       peers,
+		peers:       nil,
 		join:        join,
 		waldir:      fmt.Sprintf("raftexample-%d", id),
 		snapdir:     fmt.Sprintf("raftexample-%d-snap", id),
@@ -103,6 +107,15 @@ func newRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 
 		snapshotterReady: make(chan *snap.Snapshotter, 1),
 		// rest of structure populated after WAL replay
+	}
+	rc.peers = make(map[uint64]string, len(peers))
+	for _, item := range peers {
+		nus := strings.Split(item, "=")
+		if len(nus) != 2 {
+			log.Fatalf("wrong peer configure format %s", item)
+		}
+		idVal := newID(nus[0], clusterName)
+		rc.peers[idVal] = nus[1]
 	}
 	go rc.startRaft()
 	return commitC, errorC, rc.snapshotterReady
@@ -271,8 +284,10 @@ func (rc *raftNode) startRaft() {
 	rc.wal = rc.replayWAL()
 
 	rpeers := make([]raft.Peer, len(rc.peers))
-	for i := range rpeers {
-		rpeers[i] = raft.Peer{ID: uint64(i + 1)}
+	i := 0
+	for k := range rc.peers {
+		rpeers[i] = raft.Peer{ID: k}
+		i++
 	}
 	c := &raft.Config{
 		ID:              uint64(rc.id),
@@ -281,7 +296,7 @@ func (rc *raftNode) startRaft() {
 		Storage:         rc.raftStorage,
 		MaxSizePerMsg:   1024 * 1024,
 		MaxInflightMsgs: 256,
-		CheckQuorum:     true,
+		CheckQuorum:     false,
 	}
 
 	if oldwal {
@@ -299,14 +314,14 @@ func (rc *raftNode) startRaft() {
 		ClusterID:   0x1000,
 		Raft:        rc,
 		ServerStats: stats.NewServerStats("", ""),
-		LeaderStats: stats.NewLeaderStats(strconv.Itoa(rc.id)),
+		LeaderStats: stats.NewLeaderStats(strconv.FormatUint(rc.id, 10)),
 		ErrorC:      make(chan error),
 	}
 
 	rc.transport.Start()
-	for i := range rc.peers {
-		if i+1 != rc.id {
-			rc.transport.AddPeer(types.ID(i+1), []string{rc.peers[i]})
+	for id := range rc.peers {
+		if id != rc.id {
+			rc.transport.AddPeer(types.ID(id), []string{rc.peers[id]})
 		}
 	}
 
@@ -474,7 +489,7 @@ func (rc *raftNode) serveChannels() {
 }
 
 func (rc *raftNode) serveRaft() {
-	url, err := url.Parse(rc.peers[rc.id-1])
+	url, err := url.Parse(rc.peers[rc.id])
 	if err != nil {
 		log.Fatalf("raftexample: Failed parsing URL (%v)", err)
 	}
