@@ -113,3 +113,10 @@ When the REST server submits a proposal, the raft server transmits the proposal 
 When raft reaches a consensus, the server publishes all committed updates over a commit channel.
 For raftexample, this commit channel is consumed by the key-value store.
 
+## new running command  
+use name instead of fixed id for more real application.  
+
+like the below:  
+./raftexample --name node1 --cluster node1=http://127.0.0.1:12379 --port 12380  
+curl -L http://127.0.0.1:12380/10662699088822221207 -XPOST -d http://127.0.0.1:22379 -v (todo: should be changed with name)  
+./raftexample --name node4 --cluster node1=http://127.0.0.1:12379,node4=http://127.0.0.1:22379 --port 22380
